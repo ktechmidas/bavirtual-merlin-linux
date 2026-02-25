@@ -1,0 +1,5 @@
+# Proprietary installer - download from BAVirtual
+installer/*.exe
+
+# wineUIPC is cloned separately
+wineUIPC/

@@ -24,7 +24,7 @@ BAVirtual servers
 
 Merlin communicates with the sim via FSUIPC shared memory. Since X-Plane runs natively on Linux, [wineUIPC](https://github.com/clumsynick/wineUIPC) acts as the bridge: its XPPython3 plugin reads X-Plane datarefs and sends them over TCP to a small Windows executable (`uipc_bridge.exe`) running under Wine, which exposes them as FSUIPC shared memory that Merlin can read.
 
-Merlin will report the sim as "MSFS2024" — this is cosmetic. The FSUIPC identifier offset defaults to an MSFS value, but all flight data comes from X-Plane.
+Merlin identifies the simulator via FSUIPC handshake offsets. The wineUIPC plugin must be configured to report as X-Plane/XPUIPC (not MSFS) for Merlin to correctly match aircraft.
 
 ## Quick Start
 
@@ -197,6 +197,55 @@ cp wineUIPC/main.py ~/X-Plane\ 12/Resources/plugins/PythonPlugins/wineUIPC/
 - Fedora: `sudo dnf install mingw64-gcc`
 - Arch: `sudo pacman -S mingw-w64-gcc`
 
+### Step 7b: Configure wineUIPC for X-Plane
+
+The wineUIPC plugin defaults to identifying as MSFS2024, but **Merlin requires the X-Plane/XPUIPC identity** to correctly match aircraft. Edit the config file:
+
+```
+~/X-Plane 12/Resources/plugins/PythonPlugins/wineUIPC/wineUIPC.cfg
+```
+
+Set these values:
+```ini
+log_level=2
+host=127.0.0.1
+port=9000
+fs_version=8
+fsuipc_version=5.000
+fsuipc_build_letter=h
+fsairlines_compat=0
+```
+
+Key settings:
+- `fs_version=8` — tells Merlin this is X-Plane (14 = MSFS2024, 8 = X-Plane)
+- `fsuipc_version=5.000` with `fsuipc_build_letter=h` — matches what real XPUIPC reports on Windows
+
+You can verify the identity by checking Merlin's log after connecting:
+```
+~/.wine/drive_c/users/$USER/AppData/Roaming/BAV_ACARS/UnsupportedSims.log
+```
+It should show `Resolved Version: X-Plane` and `IsXPlane: True`.
+
+### Step 7c: Set up aircraft folder naming
+
+BAVirtual's server-side matching expects specific aircraft folder names. If your aircraft folder doesn't match, Merlin won't recognise the airframe.
+
+**Required folder names** (case-sensitive, in `~/X-Plane 12/Aircraft/`):
+- ToLiss A320neo → `ToLissA320N`
+- ToLiss A321neo → `ToLissA321N`
+- ToLiss A340-600 → `ToLissA340`
+- FlightFactor A320 → `FlightFactorA320`
+- FlightFactor 757 → `FF757v2`
+- FlightFactor 767 → `FF767`
+
+If your folder has a different name (e.g. `ToLissA320_V1p2p1`), rename it:
+```bash
+cd ~/X-Plane\ 12/Aircraft/
+mv ToLissA320_V1p2p1 ToLissA320N
+```
+
+See the [BAVirtual forum post](https://forum.bavirtual.co.uk/forums/topic/2415-my-toliss-or-flightfactor-aircraft-isnt-recognized-by-merlin-what-can-i-do/) for the complete list.
+
 ### Step 8: Launch the full stack
 
 Use the convenience script:
@@ -220,6 +269,54 @@ wine "./BAV Merlin.exe" &
 
 Merlin should detect the simulator and show a connection.
 
+**Important: Restart Merlin after first connection.** On the very first connection, Merlin receives Unix-style paths (e.g. `/home/user/X-Plane 12/...`) instead of Windows paths. This confuses the aircraft matching. Simply close and restart Merlin — on the second launch it works correctly. This is a one-time issue per session.
+
+---
+
+## Aircraft Identification
+
+Merlin verifies that you're flying the correct aircraft and livery for your booked flight. It reads aircraft data from FSUIPC shared memory offsets, which wineUIPC populates from X-Plane datarefs.
+
+### How it works
+
+The wineUIPC plugin reads these X-Plane datarefs every flight loop tick:
+
+| Dataref | Example Value |
+|---------|---------------|
+| `sim/aircraft/view/acf_ICAO` | `A20N` |
+| `sim/aircraft/view/acf_descrip` | `A320 with high fidelity system modelling` |
+| `sim/aircraft/view/acf_tailnum` | `G-TTND` |
+| `sim/aircraft/view/acf_relative_path` | `Aircraft/ToLissA320N/a320.acf` |
+| `sim/aircraft/view/acf_livery_path` | `Aircraft/ToLissA320N/liveries/British Airways (G-TTND)/` |
+| `sim/system/directory_path` | `/home/user/X-Plane 12/` |
+
+These are then mapped to FSUIPC offsets:
+
+| Offset | Size | FSUIPC Field | Source |
+|--------|------|-------------|--------|
+| 0x3D00 | 256 | Aircraft title | `<folder> <livery>` e.g. `ToLissA320N British Airways (G-TTND)` |
+| 0x3C00 | 256 | Air file path | `acf_relative_path` |
+| 0x3E00 | 256 | Sim install path | `sim/system/directory_path` |
+| 0x3500 | 24 | ATC model | `acf_ICAO` e.g. `A20N` |
+| 0x3148 | 24 | ATC airline | Extracted from livery name e.g. `British Airways` |
+| 0x313C | 12 | ATC tail number | `acf_tailnum` e.g. `G-TTND` |
+| 0x3160 | 24 | ATC type | Folder name e.g. `ToLissA320N` |
+
+The **aircraft title at 0x3D00 is the key field** that Merlin uses for matching. It's constructed as `<FolderName> <LiveryName>` — the folder name comes from `acf_relative_path` and the livery name comes from the last component of `acf_livery_path`.
+
+### Matching process
+
+Merlin downloads pattern databases from the BAVirtual server (`Known_title_match`, `Known_path_match`, `Known_airline_match`). These contain regex-like patterns that match against the FSUIPC offset data. The matching is entirely server-side — no aircraft names are hardcoded in the Merlin binary.
+
+For X-Plane, the title match patterns look for the folder name (e.g. `ToLissA320N`) combined with airline/livery keywords (e.g. `British Airways`).
+
+### Debugging aircraft detection
+
+1. Check `wineUIPC.log` for `AIRCRAFT` lines showing what data is being sent
+2. Check `UnsupportedSims.log` to verify `IsXPlane: True`
+3. Ensure the aircraft folder name matches BAVirtual's expected format (see Step 7c)
+4. Ensure your livery folder is named with the airline name (most liveries already are)
+
 ---
 
 ## Troubleshooting
@@ -233,7 +330,9 @@ Merlin should detect the simulator and show a connection.
 | X-Plane extremely laggy | Running on integrated GPU | Configure NVIDIA PRIME offload, launch with `nvidia-offload` |
 | XPPython3 doesn't load | Missing `libbsd.so.0` or similar | Add `libbsd` to FHS wrapper / install via package manager |
 | Wine "fixme:" messages in terminal | Normal Wine debug output | Harmless, ignore them. Suppress with `WINEDEBUG=-all` |
-| Merlin shows "MSFS2024" as sim | FSUIPC identifier offset | Cosmetic only — data is from X-Plane |
+| Merlin shows "MSFS2024" as sim | wineUIPC.cfg still has `fs_version=14` | Change to `fs_version=8`, `fsuipc_version=5.000`, `fsuipc_build_letter=h` (see Step 7b) |
+| Merlin doesn't detect aircraft/livery | Wrong folder name, wrong sim version, or first-run path issue | Check folder naming (Step 7c), verify `IsXPlane: True` in `UnsupportedSims.log`, restart Merlin once |
+| Aircraft detected on second launch only | First connection sends Unix paths | Normal — restart Merlin after first connection. Works correctly from second launch onward |
 | Bridge won't connect | X-Plane not running or plugin not loaded | Check `XPPython3Log.txt` for wineUIPC plugin loading |
 
 ---
@@ -281,7 +380,7 @@ Two components:
 
 They communicate over TCP with a JSON protocol. Either side can restart independently.
 
-**Offset coverage**: position, attitude, flight controls, engines (1-4), systems, lights, performance, environment, weight/fuel, NAV/ADF/DME, time, frame rate, autopilot.
+**Offset coverage**: position, attitude, flight controls, engines (1-4), systems, lights, performance, environment, weight/fuel, NAV/ADF/DME, time, frame rate, autopilot, aircraft identification (title, path, ICAO, airline, tail number).
 
 ---
 
@@ -292,6 +391,8 @@ They communicate over TCP with a JSON protocol. Either side can restart independ
 - [x] wineUIPC bridge compiles and runs
 - [x] XPPython3 + wineUIPC plugin loads in X-Plane
 - [x] Merlin detects simulator through bridge
+- [x] Aircraft identification working (folder name + livery matching)
+- [x] wineUIPC configured for X-Plane/XPUIPC identity (fs_version=8)
 - [ ] Complete a full test flight (ACARS tracking end-to-end)
 - [ ] Verify all FSUIPC offsets Merlin needs are covered by wineUIPC
 
@@ -317,3 +418,4 @@ They communicate over TCP with a JSON protocol. Either side can restart independ
 - https://xppython3.readthedocs.io/
 - https://flightsimonlinux.com
 - https://github.com/smyalygames/flightsim-on-linux
+- https://forum.bavirtual.co.uk/forums/topic/2415-my-toliss-or-flightfactor-aircraft-isnt-recognized-by-merlin-what-can-i-do/

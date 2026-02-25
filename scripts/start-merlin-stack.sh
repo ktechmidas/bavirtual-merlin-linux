@@ -115,9 +115,13 @@ PIDS+=($!)
 sleep 3
 
 # 3. Start Merlin
+# IMPORTANT: Merlin resolves DB_DEPLOY relative to the working directory,
+# not relative to its own executable. We must cd to the install directory
+# or Merlin will fail with "airport database deploy file missing" on launch.
+MERLIN_DIR="$(dirname "$MERLIN_EXE")"
 echo ""
 echo "[3/3] Starting BAVirtual Merlin..."
-wine "$MERLIN_EXE" &
+(cd "$MERLIN_DIR" && wine "./BAV Merlin.exe") &
 PIDS+=($!)
 
 echo ""

@@ -213,8 +213,9 @@ xplane-run nvidia-offload ~/X-Plane\ 12/X-Plane-x86_64 &
 # 2. Wait for X-Plane to fully load, then start the bridge
 wine /path/to/wineUIPC/uipc_bridge.exe &
 
-# 3. Start Merlin
-wine ~/.wine/drive_c/users/$USER/AppData/Local/Programs/BAVirtual\ Merlin/BAV\ Merlin.exe &
+# 3. Start Merlin (MUST launch from install dir!)
+cd ~/.wine/drive_c/users/$USER/AppData/Local/Programs/BAVirtual\ Merlin/
+wine "./BAV Merlin.exe" &
 ```
 
 Merlin should detect the simulator and show a connection.
@@ -227,7 +228,7 @@ Merlin should detect the simulator and show a connection.
 |---------|-------|-----|
 | Merlin crashes with `FontFamily` / `ObjectDisposedException` | Running on Wine Mono instead of .NET 4.8 | Delete prefix, recreate with `winetricks dotnet48` |
 | Installer says "This version of Windows is not supported" | Wine version set below Windows 10 | Run `winetricks win10` first |
-| Merlin says "airport database deploy file missing" | First-run DB deployment failed | Re-run the installer to fix |
+| Merlin says "airport database deploy file missing" | Merlin resolves DB_DEPLOY relative to the **working directory**, not the exe path | Always `cd` to the install directory before launching: `cd ~/.wine/.../BAVirtual\ Merlin/ && wine "./BAV Merlin.exe"` |
 | X-Plane missing shared libraries (NixOS) | FHS wrapper missing packages | Run `xplane-run ldd X-Plane-x86_64` and add missing libs to `xplane.nix` |
 | X-Plane extremely laggy | Running on integrated GPU | Configure NVIDIA PRIME offload, launch with `nvidia-offload` |
 | XPPython3 doesn't load | Missing `libbsd.so.0` or similar | Add `libbsd` to FHS wrapper / install via package manager |

@@ -393,7 +393,7 @@ They communicate over TCP with a JSON protocol. Either side can restart independ
 - [x] Merlin detects simulator through bridge
 - [x] Aircraft identification working (folder name + livery matching)
 - [x] wineUIPC configured for X-Plane/XPUIPC identity (fs_version=8)
-- [ ] Complete a full test flight (ACARS tracking end-to-end)
+- [x] Complete a full test flight (ACARS tracking end-to-end) — first PIREP filed from Linux!
 - [ ] Verify all FSUIPC offsets Merlin needs are covered by wineUIPC
 
 ## Tested Environment
